@@ -198,22 +198,15 @@ function processUploadedFiles(files, sessionId) {
 
 // Research mode helper functions
 
-// Detect if user message is a research request
+// Detect if message is a research request (keyword-based)
 function isResearchRequest(message) {
+  const lowerMsg = message.toLowerCase();
   const researchKeywords = [
-    /^research\s+/i,
-    /^find\s+information\s+about/i,
-    /^investigate\s+/i,
-    /^learn\s+about/i,
-    /^study\s+/i,
-    /^explore\s+/i,
-    /what\s+are\s+the\s+latest/i,
-    /comprehensive\s+(overview|analysis|report)/i,
-    /deep\s+dive\s+into/i,
-    /gather\s+information/i,
+    "research", "investigate", "analyze", "compare", "explore",
+    "find information about", "learn about", "tell me about",
+    "what are the latest", "summarize", "overview of", "deep dive"
   ];
-
-  return researchKeywords.some(pattern => pattern.test(message));
+  return researchKeywords.some(keyword => lowerMsg.includes(keyword));
 }
 
 // Generate sub-queries for research mode
@@ -373,7 +366,7 @@ const handleUpload = (req, res, next) => {
 };
 
 app.post("/api/chat", handleUpload, async (req, res) => {
-  const { message, sessionId, model } = req.body;
+  const { message, sessionId, model, research } = req.body;
   const uploadedFiles = req.files || [];
 
   if (!message) {
@@ -459,8 +452,10 @@ app.post("/api/chat", handleUpload, async (req, res) => {
 
     console.log(`Calling Vertex AI with model: ${modelId}, messages: ${conversationHistory.length}, files: ${uploadedFiles.length}`);
 
-    // Check if this is a research request
-    const isResearch = isResearchRequest(message);
+    // Check if research mode is enabled (explicit button OR keyword detection)
+    const explicitResearch = research === "true"; // From research button
+    const implicitResearch = !explicitResearch && isResearchRequest(message); // From keywords
+    const isResearch = explicitResearch || implicitResearch;
     let fullText = "";
     let allSources = [];
     let finalMessage = null;

@@ -4,6 +4,7 @@ let sessions = {};
 let isStreaming = false;
 let currentMessages = []; // local message history for display
 let selectedFiles = []; // files to upload
+let researchMode = false; // research mode toggle
 
 // DOM elements
 const chatInput = document.getElementById("chatInput");
@@ -17,6 +18,7 @@ const chatHeader = document.getElementById("chatHeader");
 const modelBadge = document.getElementById("modelBadge");
 const fileInput = document.getElementById("fileInput");
 const attachBtn = document.getElementById("attachBtn");
+const researchBtn = document.getElementById("researchBtn");
 const filesList = document.getElementById("filesList");
 
 // Configure marked
@@ -53,6 +55,19 @@ modelSelect.addEventListener("change", () => {
 
 // File upload handlers
 attachBtn.addEventListener("click", () => fileInput.click());
+
+// Research mode toggle
+researchBtn.addEventListener("click", () => {
+  researchMode = !researchMode;
+  researchBtn.classList.toggle("active", researchMode);
+
+  // Update placeholder
+  if (researchMode) {
+    chatInput.placeholder = "Enter research topic (will generate 3-5 sub-queries)...";
+  } else {
+    chatInput.placeholder = "Message Claude...";
+  }
+});
 fileInput.addEventListener("change", (e) => {
   const files = Array.from(e.target.files);
   selectedFiles.push(...files);
@@ -263,10 +278,18 @@ async function sendMessage() {
       formData.append("sessionId", currentSessionId);
     }
     formData.append("model", modelSelect.value);
+    formData.append("research", researchMode ? "true" : "false");
 
     // Add files
     for (const file of selectedFiles) {
       formData.append("files", file);
+    }
+
+    // Reset research mode after sending
+    if (researchMode) {
+      researchMode = false;
+      researchBtn.classList.remove("active");
+      chatInput.placeholder = "Message Claude...";
     }
 
     const response = await fetch("/api/chat", {
