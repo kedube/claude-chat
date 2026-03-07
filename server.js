@@ -153,7 +153,7 @@ const MODELS = [
   { alias: "claude-sonnet-4-6", label: "Sonnet 4.6", description: "Latest, fast and capable", modelId: "claude-sonnet-4@20250514" },
   { alias: "sonnet", label: "Sonnet 4.5", description: "Best for everyday tasks", modelId: "claude-sonnet-4-5@20250929" },
   { alias: "opus", label: "Opus 4.5", description: "Most capable for complex work", modelId: "claude-opus-4-5@20251101" },
-  { alias: "haiku", label: "Haiku 4.5", description: "Fastest for quick answers", modelId: "claude-haiku-4-5@20251022" },
+  { alias: "haiku", label: "Haiku 4.5", description: "Fastest for quick answers", modelId: "claude-haiku-4-5@20251001" },
 ];
 
 // Get available models
@@ -186,7 +186,16 @@ app.delete("/api/sessions/:id", (req, res) => {
 });
 
 // Chat endpoint - streams response via SSE
-app.post("/api/chat", upload.array("files", 5), async (req, res) => {
+const handleUpload = (req, res, next) => {
+  upload.array("files", 5)(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+};
+
+app.post("/api/chat", handleUpload, async (req, res) => {
   const { message, sessionId, model } = req.body;
   const uploadedFiles = req.files || [];
 
@@ -222,8 +231,6 @@ app.post("/api/chat", upload.array("files", 5), async (req, res) => {
       }
     }
   };
-
-  res.on("close", cleanupFiles);
 
   try {
     // Get conversation history
@@ -301,7 +308,15 @@ app.post("/api/chat", upload.array("files", 5), async (req, res) => {
     // Calculate cost (approximate)
     const inputTokens = finalMessage.usage.input_tokens;
     const outputTokens = finalMessage.usage.output_tokens;
-    const costPerMillion = { input: 3.0, output: 15.0 }; // Opus pricing
+    const MODEL_PRICING = {
+      "claude-opus-4": { input: 15.0, output: 75.0 },
+      "claude-sonnet-4": { input: 3.0, output: 15.0 },
+      "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
+      "claude-opus-4-5": { input: 15.0, output: 75.0 },
+      "claude-haiku-4-5": { input: 0.8, output: 4.0 },
+    };
+    const modelFamily = modelId.split("@")[0];
+    const costPerMillion = MODEL_PRICING[modelFamily] || { input: 3.0, output: 15.0 };
     const totalCost = (inputTokens * costPerMillion.input + outputTokens * costPerMillion.output) / 1000000;
 
     res.write(`data: ${JSON.stringify({ type: "done", cost: totalCost, model: modelId })}\n\n`);
@@ -342,7 +357,14 @@ app.post("/api/chat", upload.array("files", 5), async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Claude Chat Client running at http://localhost:${PORT}`);
-  console.log(`Using Vertex AI in project: ${GOOGLE_CLOUD_PROJECT}, region: ${GOOGLE_CLOUD_REGION}`);
-});
+// Export app for testing
+export { app, MODELS, loadSessions, saveSessions, DATA_DIR };
+
+// Start server only when run directly
+import { fileURLToPath } from "url";
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  app.listen(PORT, () => {
+    console.log(`Claude Chat Client running at http://localhost:${PORT}`);
+    console.log(`Using Vertex AI in project: ${GOOGLE_CLOUD_PROJECT}, region: ${GOOGLE_CLOUD_REGION}`);
+  });
+}
