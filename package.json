@@ -10,7 +10,10 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.70",
+    "@anthropic-ai/vertex-sdk": "^0.14.4",
     "express": "^4.21.0",
+    "file-type": "^20.5.0",
+    "multer": "^2.1.1",
     "uuid": "^11.1.0"
   }
 }

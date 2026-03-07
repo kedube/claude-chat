@@ -3,6 +3,7 @@ let currentSessionId = null;
 let sessions = {};
 let isStreaming = false;
 let currentMessages = []; // local message history for display
+let selectedFiles = []; // files to upload
 
 // DOM elements
 const chatInput = document.getElementById("chatInput");
@@ -14,6 +15,9 @@ const newChatBtn = document.getElementById("newChatBtn");
 const modelSelect = document.getElementById("modelSelect");
 const chatHeader = document.getElementById("chatHeader");
 const modelBadge = document.getElementById("modelBadge");
+const fileInput = document.getElementById("fileInput");
+const attachBtn = document.getElementById("attachBtn");
+const filesList = document.getElementById("filesList");
 
 // Configure marked
 marked.setOptions({
@@ -47,6 +51,15 @@ modelSelect.addEventListener("change", () => {
   modelBadge.textContent = modelSelect.value;
 });
 
+// File upload handlers
+attachBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", (e) => {
+  const files = Array.from(e.target.files);
+  selectedFiles.push(...files);
+  renderFilesList();
+  fileInput.value = ""; // Reset input
+});
+
 // Initialize
 loadModels();
 loadSessions();
@@ -54,10 +67,34 @@ loadSessions();
 function startNewChat() {
   currentSessionId = null;
   currentMessages = [];
+  selectedFiles = [];
   renderMessages();
+  renderFilesList();
   updateHeader("New Chat");
   highlightActiveSession();
   chatInput.focus();
+}
+
+function renderFilesList() {
+  if (selectedFiles.length === 0) {
+    filesList.style.display = "none";
+    return;
+  }
+
+  filesList.style.display = "flex";
+  filesList.innerHTML = selectedFiles
+    .map((file, idx) => `
+      <div class="file-tag">
+        <span>${escapeHtml(file.name)}</span>
+        <span class="remove" onclick="removeFile(${idx})">×</span>
+      </div>
+    `)
+    .join("");
+}
+
+function removeFile(index) {
+  selectedFiles.splice(index, 1);
+  renderFilesList();
 }
 
 function updateHeader(title) {
@@ -219,15 +256,42 @@ async function sendMessage() {
   const contentEl = msgEl.querySelector(".message-content");
 
   try {
+    // Build form data with files
+    const formData = new FormData();
+    formData.append("message", text);
+    if (currentSessionId) {
+      formData.append("sessionId", currentSessionId);
+    }
+    formData.append("model", modelSelect.value);
+
+    // Add files
+    for (const file of selectedFiles) {
+      formData.append("files", file);
+    }
+
     const response = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: text,
-        sessionId: currentSessionId,
-        model: modelSelect.value,
-      }),
+      body: formData,
     });
+
+    // Check for HTTP errors (like 400 Bad Request for invalid files)
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = "Upload failed";
+
+      // Try to extract error message from HTML or JSON response
+      if (errorText.includes("Only text files are allowed")) {
+        const match = errorText.match(/Only text files are allowed[^<]*/);
+        errorMessage = match ? match[0] : "Only text files are allowed. Images and binary files are not supported.";
+      } else if (errorText.includes("error")) {
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error || errorMessage;
+        } catch {}
+      }
+
+      throw new Error(errorMessage);
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -283,6 +347,10 @@ async function sendMessage() {
     assistantMsg.content = fullText;
     addCopyButtons();
 
+    // Clear uploaded files
+    selectedFiles = [];
+    renderFilesList();
+
     // Refresh session list
     await loadSessions();
     highlightActiveSession();
@@ -293,7 +361,14 @@ async function sendMessage() {
     }
   } catch (err) {
     contentEl.classList.remove("streaming-cursor");
-    contentEl.innerHTML = `<p style="color: var(--accent)">Connection error: ${escapeHtml(err.message)}</p>`;
+    contentEl.innerHTML = `<p style="color: var(--accent)">Error: ${escapeHtml(err.message)}</p>`;
+
+    // Remove the failed assistant message
+    currentMessages.pop();
+
+    // Clear files on error
+    selectedFiles = [];
+    renderFilesList();
   } finally {
     isStreaming = false;
     sendBtn.disabled = false;
