@@ -129,10 +129,10 @@ describe("GET /api/sessions/:id/messages", () => {
     expect(res.body).toEqual([]);
   });
 
-  it("returns messages for existing session", async () => {
+  it("returns messages for existing session with new format", async () => {
     const messages = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi there" },
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "hi there" }] },
     ];
     writeTestSessions({
       sess1: {
@@ -145,6 +145,29 @@ describe("GET /api/sessions/:id/messages", () => {
     const res = await request(app).get("/api/sessions/sess1/messages");
     expect(res.status).toBe(200);
     expect(res.body).toEqual(messages);
+  });
+
+  it("normalizes old format messages to new format", async () => {
+    // Old format with plain string content
+    const oldMessages = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+    ];
+    writeTestSessions({
+      sess1: {
+        id: "sess1",
+        title: "Old Session",
+        messages: oldMessages,
+      },
+    });
+
+    const res = await request(app).get("/api/sessions/sess1/messages");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+
+    // Should be normalized to new format
+    expect(res.body[0].content).toEqual([{ type: "text", text: "hello" }]);
+    expect(res.body[1].content).toEqual([{ type: "text", text: "hi there" }]);
   });
 });
 
@@ -219,10 +242,9 @@ describe("POST /api/chat", () => {
     expect(sessionEvent).toBeTruthy();
     expect(sessionEvent.sessionId).toBeTruthy();
 
-    // Should have done event with cost
+    // Should have done event
     const doneEvent = events.find((e) => e.type === "done");
     expect(doneEvent).toBeTruthy();
-    expect(doneEvent.cost).toBeGreaterThan(0);
   });
 
   it("creates a new session for first message", async () => {
@@ -259,5 +281,19 @@ describe("POST /api/chat", () => {
       .attach("files", Buffer.from("hello world"), "test.txt");
 
     expect(res.status).toBe(200);
+
+    // Parse SSE events to verify session was created
+    const events = res.text
+      .split("\n")
+      .filter((l) => l.startsWith("data: ") && l !== "data: [DONE]")
+      .map((l) => {
+        try { return JSON.parse(l.slice(6)); } catch { return null; }
+      })
+      .filter(Boolean);
+
+    const sessionEvent = events.find((e) => e.type === "session");
+    expect(sessionEvent).toBeTruthy();
+    expect(sessionEvent.sessionId).toBeTruthy();
   });
 });
+

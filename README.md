@@ -35,12 +35,15 @@ GOOGLE_CLOUD_PROJECT=your-project-id npm run dev
 
 ## Features
 
-- Chat with Claude through a clean web UI
-- Model selection (Opus, Sonnet, Haiku, and specific versions)
-- File uploads: images (.png, .jpg, .gif, .webp), PDFs, and text/code files
-- Streaming responses with markdown rendering and syntax highlighting
-- Session history with persistence across restarts
-- Cost tracking per message
+- **Chat Interface**: Clean, responsive web UI for Claude conversations
+- **Model Selection**: Choose from 5 Claude models (Opus 4.6, Sonnet 4.6, and aliases)
+- **File Uploads**: Support for images (.png, .jpg, .gif, .webp), PDFs, and text/code files
+- **Research Mode**: Multi-query web search with intelligent topic breakdown and progress tracking
+- **Streaming Responses**: Real-time streaming with markdown rendering and syntax highlighting
+- **Stop Control**: Cancel streaming responses or research queries mid-execution
+- **Dark/Light Theme**: Toggle between themes with smooth transitions
+- **Session Management**: Persistent chat history with rename and delete capabilities
+- **Modular Architecture**: Clean codebase with separated concerns for easy maintenance
 
 ## How It Works
 
