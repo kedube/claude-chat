@@ -47,7 +47,7 @@ GOOGLE_CLOUD_PROJECT=your-project-id npm run dev
 
 ## How It Works
 
-The server uses the [Anthropic Vertex AI SDK](https://github.com/anthropics/anthropic-sdk-python) to call Claude models directly via Google Cloud's Vertex AI. Responses are streamed back to the browser via Server-Sent Events. Sessions are stored locally in `~/.claude-chat/data/`.
+The server uses the [Anthropic Vertex AI SDK](https://github.com/anthropics/anthropic-sdk-typescript) to call Claude models directly via Google Cloud's Vertex AI. Responses are streamed back to the browser via Server-Sent Events. Sessions are stored locally in `~/.claude-chat/data/`.
 
 ## Configuration
 

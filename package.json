@@ -2,7 +2,7 @@
   "name": "claude-chat-client",
   "version": "1.1.0",
   "type": "module",
-  "description": "Chat client UI that proxies to Claude Code",
+  "description": "A web-based chat interface for Claude via Anthropic Vertex AI SDK",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
