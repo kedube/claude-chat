@@ -1,5 +1,11 @@
 # Claude Chat Client
 
+[![Tests](https://github.com/anshulbehl/claude-chat/actions/workflows/test.yml/badge.svg)](https://github.com/anshulbehl/claude-chat/actions/workflows/test.yml)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Claude](https://img.shields.io/badge/Claude-Anthropic-cc785c?logo=anthropic&logoColor=white)](https://www.anthropic.com/)
+[![Vertex AI](https://img.shields.io/badge/Vertex%20AI-Google%20Cloud-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai)
+[![License](https://img.shields.io/github/license/anshulbehl/claude-chat?color=blue)](LICENSE)
+
 A lightweight web-based chat interface for Claude, powered by the Anthropic Vertex AI SDK. Provides a claude.ai-like experience with file upload support.
 
 ## Prerequisites
