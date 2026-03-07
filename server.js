@@ -196,6 +196,98 @@ function processUploadedFiles(files, sessionId) {
   return { apiContent, fileReferences };
 }
 
+// Research mode helper functions
+
+// Detect if user message is a research request
+function isResearchRequest(message) {
+  const researchKeywords = [
+    /^research\s+/i,
+    /^find\s+information\s+about/i,
+    /^investigate\s+/i,
+    /^learn\s+about/i,
+    /^study\s+/i,
+    /^explore\s+/i,
+    /what\s+are\s+the\s+latest/i,
+    /comprehensive\s+(overview|analysis|report)/i,
+    /deep\s+dive\s+into/i,
+    /gather\s+information/i,
+  ];
+
+  return researchKeywords.some(pattern => pattern.test(message));
+}
+
+// Generate sub-queries for research mode
+async function generateResearchQueries(topic, modelId) {
+  const prompt = `You are a research assistant. Given a research topic, break it down into 3-5 focused search queries that would comprehensively cover the topic.
+
+Research Topic: ${topic}
+
+Return ONLY a JSON array of search query strings, nothing else. Example format:
+["query 1", "query 2", "query 3"]
+
+Queries should be:
+- Specific and focused
+- Cover different aspects of the topic
+- Suitable for web search
+- Ordered from general to specific`;
+
+  try {
+    const response = await client.messages.create({
+      model: modelId,
+      max_tokens: 500,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = response.content[0].text.trim();
+    // Extract JSON array from response
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const queries = JSON.parse(jsonMatch[0]);
+      return Array.isArray(queries) ? queries.slice(0, 5) : [];
+    }
+    return [];
+  } catch (err) {
+    console.error("Failed to generate research queries:", err);
+    return [];
+  }
+}
+
+// Execute a single search query
+async function executeSearch(query, modelId) {
+  try {
+    const stream = await client.messages.stream({
+      model: modelId,
+      max_tokens: 2048,
+      messages: [{ role: "user", content: query }],
+      tools: [{ name: "web_search", type: "web_search_20250305" }],
+    });
+
+    const finalMessage = await stream.finalMessage();
+
+    // Extract search results
+    const results = [];
+    for (const block of finalMessage.content) {
+      if (block.type === 'web_search_tool_result') {
+        const searchResults = Array.isArray(block.content) ? block.content
+          .filter(r => r.type === 'web_search_result')
+          .map(r => ({ title: r.title, url: r.url, snippet: r.content || '' })) : [];
+        results.push(...searchResults);
+      }
+    }
+
+    // Extract text response
+    const text = finalMessage.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('');
+
+    return { results, text };
+  } catch (err) {
+    console.error(`Failed to execute search for query: ${query}`, err);
+    return { results: [], text: '' };
+  }
+}
+
 app.use(express.json());
 app.use(express.static("public"));
 
@@ -367,95 +459,183 @@ app.post("/api/chat", handleUpload, async (req, res) => {
 
     console.log(`Calling Vertex AI with model: ${modelId}, messages: ${conversationHistory.length}, files: ${uploadedFiles.length}`);
 
-    // Call Anthropic Vertex AI with streaming
+    // Check if this is a research request
+    const isResearch = isResearchRequest(message);
     let fullText = "";
+    let allSources = [];
+    let finalMessage = null;
 
-    const stream = await client.messages.stream({
-      model: modelId,
-      max_tokens: 8192,
-      messages: conversationHistory,
-      tools: [
-        { name: "web_search", type: "web_search_20250305" },
-      ],
-      system: "You are Claude, a helpful AI assistant made by Anthropic. You are being accessed through a chat interface, similar to claude.ai. Have a natural conversation. Be helpful, harmless, and honest. Use markdown formatting when appropriate.",
-    });
+    if (isResearch) {
+      // Research mode: generate queries and execute sequentially
+      res.write(`data: ${JSON.stringify({ type: "research_start" })}\n\n`);
 
-    // Handle streaming events
-    stream.on('text', (text) => {
-      fullText += text;
-      res.write(`data: ${JSON.stringify({ type: "text", text })}\n\n`);
-    });
+      console.log(`Research mode activated for: ${message}`);
 
-    // Catch tool use events in real-time via raw stream events
-    let activeToolIndex = -1;
-    let toolInputJson = "";
-    stream.on('streamEvent', (event) => {
-      if (event.type === 'content_block_start') {
-        const block = event.content_block;
-        if (block.type === 'server_tool_use' && block.name === 'web_search') {
-          activeToolIndex = event.index;
-          toolInputJson = "";
-          // Send immediate indicator (query will follow)
-          res.write(`data: ${JSON.stringify({ type: "tool_use", name: "web_search" })}\n\n`);
+      // Generate sub-queries
+      const queries = await generateResearchQueries(message, modelId);
+
+      if (queries.length === 0) {
+        // Fall back to normal mode if query generation fails
+        res.write(`data: ${JSON.stringify({ type: "research_error", error: "Failed to generate research queries" })}\n\n`);
+      } else {
+        res.write(`data: ${JSON.stringify({ type: "research_queries", queries, total: queries.length })}\n\n`);
+
+        // Execute each query sequentially
+        const queryResults = [];
+        for (let i = 0; i < queries.length; i++) {
+          const query = queries[i];
+          res.write(`data: ${JSON.stringify({ type: "research_query", query, index: i + 1, total: queries.length })}\n\n`);
+
+          const { results, text } = await executeSearch(query, modelId);
+          queryResults.push({ query, results, text });
+          allSources.push(...results);
+
+          res.write(`data: ${JSON.stringify({ type: "research_progress", completed: i + 1, total: queries.length })}\n\n`);
         }
-      } else if (event.type === 'content_block_delta' && event.index === activeToolIndex) {
-        if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
-          toolInputJson += event.delta.partial_json;
+
+        // Send all sources
+        res.write(`data: ${JSON.stringify({ type: "research_sources", sources: allSources })}\n\n`);
+
+        // Synthesize final response
+        const synthesisPrompt = `Based on the following research findings, provide a comprehensive answer to: ${message}
+
+Research Findings:
+${queryResults.map((r, i) => `
+Query ${i + 1}: ${r.query}
+Findings: ${r.text}
+Sources: ${r.results.map(s => `- ${s.title} (${s.url})`).join('\n')}
+`).join('\n---\n')}
+
+Provide a well-structured, comprehensive response that synthesizes these findings. Include citations where appropriate using [Source Title](URL) format.`;
+
+        const synthesisStream = await client.messages.stream({
+          model: modelId,
+          max_tokens: 8192,
+          messages: [{ role: "user", content: synthesisPrompt }],
+        });
+
+        synthesisStream.on('text', (text) => {
+          fullText += text;
+          res.write(`data: ${JSON.stringify({ type: "text", text })}\n\n`);
+        });
+
+        finalMessage = await synthesisStream.finalMessage();
+
+        if (!fullText) {
+          fullText = finalMessage.content
+            .filter(block => block.type === 'text')
+            .map(block => block.text)
+            .join('');
+          res.write(`data: ${JSON.stringify({ type: "text", text: fullText })}\n\n`);
         }
-      } else if (event.type === 'content_block_stop' && event.index === activeToolIndex) {
-        // Send the complete query once we have it
-        try {
-          const input = JSON.parse(toolInputJson);
-          if (input.query) {
-            res.write(`data: ${JSON.stringify({ type: "tool_query", query: input.query })}\n\n`);
+      }
+    } else {
+      // Normal mode: single query with streaming
+      const stream = await client.messages.stream({
+        model: modelId,
+        max_tokens: 8192,
+        messages: conversationHistory,
+        tools: [
+          { name: "web_search", type: "web_search_20250305" },
+        ],
+        system: "You are Claude, a helpful AI assistant made by Anthropic. You are being accessed through a chat interface, similar to claude.ai. Have a natural conversation. Be helpful, harmless, and honest. Use markdown formatting when appropriate.",
+      });
+
+      // Handle streaming events
+      stream.on('text', (text) => {
+        fullText += text;
+        res.write(`data: ${JSON.stringify({ type: "text", text })}\n\n`);
+      });
+
+      // Catch tool use events in real-time via raw stream events
+      let activeToolIndex = -1;
+      let toolInputJson = "";
+      stream.on('streamEvent', (event) => {
+        if (event.type === 'content_block_start') {
+          const block = event.content_block;
+          if (block.type === 'server_tool_use' && block.name === 'web_search') {
+            activeToolIndex = event.index;
+            toolInputJson = "";
+            // Send immediate indicator (query will follow)
+            res.write(`data: ${JSON.stringify({ type: "tool_use", name: "web_search" })}\n\n`);
           }
-        } catch {}
-        activeToolIndex = -1;
+        } else if (event.type === 'content_block_delta' && event.index === activeToolIndex) {
+          if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
+            toolInputJson += event.delta.partial_json;
+          }
+        } else if (event.type === 'content_block_stop' && event.index === activeToolIndex) {
+          // Send the complete query once we have it
+          try {
+            const input = JSON.parse(toolInputJson);
+            if (input.query) {
+              res.write(`data: ${JSON.stringify({ type: "tool_query", query: input.query })}\n\n`);
+            }
+          } catch {}
+          activeToolIndex = -1;
+        }
+      });
+
+      stream.on('error', (error) => {
+        console.error('Stream error:', error);
+        res.write(`data: ${JSON.stringify({ type: "error", error: error.message })}\n\n`);
+      });
+
+      // Wait for stream to complete
+      finalMessage = await stream.finalMessage();
+
+      // Extract search results from final message
+      for (const block of finalMessage.content) {
+        if (block.type === 'web_search_tool_result') {
+          const results = Array.isArray(block.content) ? block.content
+            .filter(r => r.type === 'web_search_result')
+            .map(r => ({ title: r.title, url: r.url })) : [];
+          res.write(`data: ${JSON.stringify({ type: "web_search_results", results })}\n\n`);
+        }
       }
-    });
 
-    stream.on('error', (error) => {
-      console.error('Stream error:', error);
-      res.write(`data: ${JSON.stringify({ type: "error", error: error.message })}\n\n`);
-    });
+      // Extract text from response
+      const assistantText = finalMessage.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('');
 
-    // Wait for stream to complete
-    const finalMessage = await stream.finalMessage();
-
-    // Extract search results from final message
-    for (const block of finalMessage.content) {
-      if (block.type === 'web_search_tool_result') {
-        const results = Array.isArray(block.content) ? block.content
-          .filter(r => r.type === 'web_search_result')
-          .map(r => ({ title: r.title, url: r.url })) : [];
-        res.write(`data: ${JSON.stringify({ type: "web_search_results", results })}\n\n`);
+      if (!fullText) {
+        fullText = assistantText;
+        res.write(`data: ${JSON.stringify({ type: "text", text: fullText })}\n\n`);
       }
-    }
-
-    // Extract text from response
-    const assistantText = finalMessage.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('');
-
-    if (!fullText) {
-      fullText = assistantText;
-      res.write(`data: ${JSON.stringify({ type: "text", text: fullText })}\n\n`);
     }
 
     // Calculate cost (approximate)
-    const inputTokens = finalMessage.usage.input_tokens;
-    const outputTokens = finalMessage.usage.output_tokens;
-    const MODEL_PRICING = {
-      "claude-opus-4": { input: 15.0, output: 75.0 },
-      "claude-sonnet-4": { input: 3.0, output: 15.0 },
-      "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
-      "claude-opus-4-5": { input: 15.0, output: 75.0 },
-      "claude-haiku-4-5": { input: 0.8, output: 4.0 },
-    };
-    const modelFamily = modelId.split("@")[0];
-    const costPerMillion = MODEL_PRICING[modelFamily] || { input: 3.0, output: 15.0 };
-    const totalCost = (inputTokens * costPerMillion.input + outputTokens * costPerMillion.output) / 1000000;
+    // For research mode, cost is estimated; for normal mode, it's from API response
+    let totalCost = 0;
+    if (isResearch) {
+      // Rough estimate for research mode (multiple queries + synthesis)
+      const estimatedTokens = fullText.length * 1.3; // Rough token estimate
+      const MODEL_PRICING = {
+        "claude-opus-4": { input: 15.0, output: 75.0 },
+        "claude-sonnet-4": { input: 3.0, output: 15.0 },
+        "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
+        "claude-opus-4-5": { input: 15.0, output: 75.0 },
+        "claude-haiku-4-5": { input: 0.8, output: 4.0 },
+      };
+      const modelFamily = modelId.split("@")[0];
+      const costPerMillion = MODEL_PRICING[modelFamily] || { input: 3.0, output: 15.0 };
+      totalCost = (estimatedTokens * costPerMillion.output) / 1000000;
+    } else {
+      // Normal mode - use actual usage from API
+      const inputTokens = finalMessage.usage.input_tokens;
+      const outputTokens = finalMessage.usage.output_tokens;
+      const MODEL_PRICING = {
+        "claude-opus-4": { input: 15.0, output: 75.0 },
+        "claude-sonnet-4": { input: 3.0, output: 15.0 },
+        "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
+        "claude-opus-4-5": { input: 15.0, output: 75.0 },
+        "claude-haiku-4-5": { input: 0.8, output: 4.0 },
+      };
+      const modelFamily = modelId.split("@")[0];
+      const costPerMillion = MODEL_PRICING[modelFamily] || { input: 3.0, output: 15.0 };
+      totalCost = (inputTokens * costPerMillion.input + outputTokens * costPerMillion.output) / 1000000;
+    }
 
     res.write(`data: ${JSON.stringify({ type: "done", cost: totalCost, model: modelId })}\n\n`);
 

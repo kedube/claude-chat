@@ -317,6 +317,77 @@ async function sendMessage() {
 
           if (event.type === "session") {
             currentSessionId = event.sessionId;
+          } else if (event.type === "research_start") {
+            // Research mode activated
+            if (!gotFirstText) {
+              contentEl.innerHTML = "";
+              gotFirstText = true;
+            }
+            contentEl.innerHTML = `
+              <div class="research-mode">
+                <div class="research-header">
+                  <span class="research-icon">🔍</span>
+                  <strong>Research Mode Activated</strong>
+                </div>
+                <div class="research-status">Generating research queries...</div>
+              </div>
+            `;
+            scrollToBottom();
+          } else if (event.type === "research_queries") {
+            // Show the queries that will be executed
+            const queriesHtml = event.queries.map((q, i) => `
+              <div class="research-query-item" data-index="${i}">
+                <span class="query-number">${i + 1}</span>
+                <span class="query-text">${escapeHtml(q)}</span>
+                <span class="query-status pending">⏳</span>
+              </div>
+            `).join('');
+            contentEl.innerHTML = `
+              <div class="research-mode">
+                <div class="research-header">
+                  <span class="research-icon">🔍</span>
+                  <strong>Research Plan</strong>
+                </div>
+                <div class="research-queries">
+                  ${queriesHtml}
+                </div>
+                <div class="research-progress">
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: 0%"></div>
+                  </div>
+                  <div class="progress-text">0 / ${event.total} queries completed</div>
+                </div>
+              </div>
+            `;
+            msgEl._totalQueries = event.total;
+            scrollToBottom();
+          } else if (event.type === "research_query") {
+            // Mark current query as in progress
+            const queryItems = contentEl.querySelectorAll(".research-query-item");
+            if (queryItems[event.index - 1]) {
+              queryItems[event.index - 1].querySelector(".query-status").innerHTML = "⏳";
+              queryItems[event.index - 1].classList.add("active");
+            }
+            scrollToBottom();
+          } else if (event.type === "research_progress") {
+            // Update progress
+            const progressFill = contentEl.querySelector(".progress-fill");
+            const progressText = contentEl.querySelector(".progress-text");
+            const percentage = (event.completed / event.total) * 100;
+            if (progressFill) progressFill.style.width = percentage + "%";
+            if (progressText) progressText.textContent = `${event.completed} / ${event.total} queries completed`;
+
+            // Mark completed queries
+            const queryItems = contentEl.querySelectorAll(".research-query-item");
+            if (queryItems[event.completed - 1]) {
+              queryItems[event.completed - 1].querySelector(".query-status").innerHTML = "✅";
+              queryItems[event.completed - 1].classList.remove("active");
+              queryItems[event.completed - 1].classList.add("completed");
+            }
+            scrollToBottom();
+          } else if (event.type === "research_sources") {
+            // Store sources for later display
+            msgEl._researchSources = event.sources;
           } else if (event.type === "text") {
             if (!gotFirstText) {
               contentEl.innerHTML = "";
@@ -343,8 +414,18 @@ async function sendMessage() {
             msgEl._searchResults = event.results;
           } else if (event.type === "done") {
             contentEl.classList.remove("streaming-cursor");
-            // Append search sources if any
-            if (msgEl._searchResults?.length > 0) {
+
+            // Append research sources if any (from research mode)
+            if (msgEl._researchSources?.length > 0) {
+              const sourcesEl = document.createElement("div");
+              sourcesEl.className = "search-sources research-sources-list";
+              sourcesEl.innerHTML = `<details open><summary>Research Sources (${msgEl._researchSources.length})</summary><ul>${
+                msgEl._researchSources.map(r => `<li><a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a></li>`).join("")
+              }</ul></details>`;
+              msgEl.appendChild(sourcesEl);
+            }
+            // Append web search sources if any (from normal search)
+            else if (msgEl._searchResults?.length > 0) {
               const sourcesEl = document.createElement("div");
               sourcesEl.className = "search-sources";
               sourcesEl.innerHTML = `<details><summary>Sources (${msgEl._searchResults.length})</summary><ul>${
@@ -352,6 +433,7 @@ async function sendMessage() {
               }</ul></details>`;
               msgEl.appendChild(sourcesEl);
             }
+
             if (event.cost) {
               const costEl = document.createElement("div");
               costEl.className = "cost-info";
