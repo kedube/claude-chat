@@ -4,7 +4,6 @@ import { probeModels, ALL_MODELS } from "./lib/models.js";
 import { upload } from "./lib/file-processor.js";
 import { setupModelsRoutes } from "./lib/routes/models.js";
 import { setupSessionsRoutes } from "./lib/routes/sessions.js";
-import { setupWorkspaceRoutes } from "./lib/routes/workspace.js";
 import { setupChatRoute } from "./lib/routes/chat.js";
 
 // Create Express app
@@ -19,7 +18,6 @@ const availableModels = await probeModels(client);
 // Setup all API routes
 setupModelsRoutes(app, availableModels);
 setupSessionsRoutes(app);
-setupWorkspaceRoutes(app);
 setupChatRoute(app, client, upload);
 
 // Start server
