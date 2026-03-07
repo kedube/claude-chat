@@ -129,10 +129,10 @@ describe("GET /api/sessions/:id/messages", () => {
     expect(res.body).toEqual([]);
   });
 
-  it("returns messages for existing session", async () => {
+  it("returns messages for existing session with new format", async () => {
     const messages = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi there" },
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "hi there" }] },
     ];
     writeTestSessions({
       sess1: {
@@ -145,6 +145,29 @@ describe("GET /api/sessions/:id/messages", () => {
     const res = await request(app).get("/api/sessions/sess1/messages");
     expect(res.status).toBe(200);
     expect(res.body).toEqual(messages);
+  });
+
+  it("normalizes old format messages to new format", async () => {
+    // Old format with plain string content
+    const oldMessages = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+    ];
+    writeTestSessions({
+      sess1: {
+        id: "sess1",
+        title: "Old Session",
+        messages: oldMessages,
+      },
+    });
+
+    const res = await request(app).get("/api/sessions/sess1/messages");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+
+    // Should be normalized to new format
+    expect(res.body[0].content).toEqual([{ type: "text", text: "hello" }]);
+    expect(res.body[1].content).toEqual([{ type: "text", text: "hi there" }]);
   });
 });
 
@@ -245,7 +268,7 @@ describe("POST /api/chat", () => {
     expect(session.model).toBe("sonnet");
   });
 
-  it("accepts text file uploads", async () => {
+  it("accepts text file uploads and saves to workspace", async () => {
     mockStream.on.mockImplementation(() => mockStream);
     mockStream.finalMessage.mockResolvedValue({
       content: [{ type: "text", text: "File received" }],
@@ -259,5 +282,89 @@ describe("POST /api/chat", () => {
       .attach("files", Buffer.from("hello world"), "test.txt");
 
     expect(res.status).toBe(200);
+
+    // Parse SSE events to get session ID
+    const events = res.text
+      .split("\n")
+      .filter((l) => l.startsWith("data: ") && l !== "data: [DONE]")
+      .map((l) => {
+        try { return JSON.parse(l.slice(6)); } catch { return null; }
+      })
+      .filter(Boolean);
+
+    const sessionEvent = events.find((e) => e.type === "session");
+    expect(sessionEvent).toBeTruthy();
+
+    // Verify file was saved to workspace
+    const filesRes = await request(app).get(`/api/workspace/${sessionEvent.sessionId}/files`);
+    expect(filesRes.status).toBe(200);
+    expect(filesRes.body).toHaveLength(1);
+    expect(filesRes.body[0].name).toBe("test.txt");
+  });
+});
+
+describe("GET /api/workspace/:sessionId/files", () => {
+  it("returns empty array for non-existent workspace", async () => {
+    const res = await request(app).get("/api/workspace/nonexistent/files");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns list of files in workspace", async () => {
+    // Create a test session with workspace
+    const sessionId = "test-workspace";
+    const workspaceDir = join(TEST_DATA_DIR, ".claude-chat", "data", sessionId, "workspace");
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(join(workspaceDir, "file1.txt"), "content1");
+    writeFileSync(join(workspaceDir, "file2.md"), "content2");
+
+    const res = await request(app).get(`/api/workspace/${sessionId}/files`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+
+    const names = res.body.map(f => f.name);
+    expect(names).toContain("file1.txt");
+    expect(names).toContain("file2.md");
+
+    // Verify file info
+    const file1 = res.body.find(f => f.name === "file1.txt");
+    expect(file1.size).toBe(8); // "content1" is 8 bytes
+    expect(file1.path).toBe("workspace/file1.txt");
+    expect(file1.modified).toBeTruthy();
+  });
+});
+
+describe("GET /api/workspace/:sessionId/file", () => {
+  it("returns 400 when path parameter is missing", async () => {
+    const res = await request(app).get("/api/workspace/test/file");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("path query parameter is required");
+  });
+
+  it("returns 400 for directory traversal attempts", async () => {
+    const res = await request(app).get("/api/workspace/test/file?path=../secrets.txt");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid path");
+  });
+
+  it("returns 404 for non-existent file", async () => {
+    const res = await request(app).get("/api/workspace/test/file?path=workspace/missing.txt");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("File not found");
+  });
+
+  it("returns file content with correct headers", async () => {
+    // Create a test file
+    const sessionId = "test-file-download";
+    const workspaceDir = join(TEST_DATA_DIR, ".claude-chat", "data", sessionId, "workspace");
+    mkdirSync(workspaceDir, { recursive: true });
+    const testContent = "Hello from workspace!";
+    writeFileSync(join(workspaceDir, "hello.txt"), testContent);
+
+    const res = await request(app).get(`/api/workspace/${sessionId}/file?path=workspace/hello.txt`);
+    expect(res.status).toBe(200);
+    expect(res.text).toBe(testContent);
+    expect(res.headers["content-type"]).toBe("text/plain");
+    expect(res.headers["content-disposition"]).toContain("hello.txt");
   });
 });

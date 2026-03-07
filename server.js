@@ -1,6 +1,6 @@
 import express from "express";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
-import { join } from "path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, copyFileSync, readdirSync, statSync, createReadStream } from "fs";
+import { join, basename } from "path";
 import { homedir } from "os";
 import multer from "multer";
 import AnthropicVertex from "@anthropic-ai/vertex-sdk";
@@ -32,6 +32,33 @@ const SESSIONS_FILE = join(DATA_DIR, "sessions.json");
 // Upload directory for temporary file storage
 const UPLOAD_DIR = join(homedir(), ".claude-chat", "uploads");
 mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Helper functions for workspace management
+function getWorkspacePath(sessionId) {
+  return join(DATA_DIR, sessionId, "workspace");
+}
+
+function ensureWorkspaceExists(sessionId) {
+  const workspacePath = getWorkspacePath(sessionId);
+  mkdirSync(workspacePath, { recursive: true });
+  return workspacePath;
+}
+
+// Normalize message content for backward compatibility
+// Old format: { role, content: "string" }
+// New format: { role, content: [{ type: "text", text: "..." }, { type: "file_ref", ... }] }
+function normalizeMessageContent(message) {
+  // If content is already an array, it's new format
+  if (Array.isArray(message.content)) {
+    return message;
+  }
+
+  // Old format - convert to new format
+  return {
+    ...message,
+    content: [{ type: "text", text: message.content }]
+  };
+}
 
 // Supported file types
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
@@ -96,20 +123,45 @@ function getMediaType(filename) {
   return mediaTypes[ext] || 'text/plain';
 }
 
-// Process uploaded files into Anthropic content format
-function processUploadedFiles(files) {
-  const content = [];
+// Process uploaded files into Anthropic content format and save to workspace
+// Returns { apiContent, fileReferences }
+function processUploadedFiles(files, sessionId) {
+  const apiContent = [];
+  const fileReferences = [];
+
+  if (!sessionId) {
+    throw new Error("sessionId is required for processUploadedFiles");
+  }
+
+  // Ensure workspace directory exists
+  const workspacePath = ensureWorkspaceExists(sessionId);
 
   for (const file of files) {
     const ext = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+    const filename = basename(file.originalname);
+    const workspaceFilePath = join(workspacePath, filename);
 
+    // Copy file to workspace
+    copyFileSync(file.path, workspaceFilePath);
+
+    // Create file reference for storage
+    const fileRef = {
+      type: "file_ref",
+      name: filename,
+      path: join("workspace", filename), // Relative path from session directory
+      size: file.size,
+      mimeType: file.mimetype
+    };
+    fileReferences.push(fileRef);
+
+    // Create API content based on file type
     if (IMAGE_EXTENSIONS.includes(ext)) {
       // Image files - use "image" type
       const fileData = readFileSync(file.path);
       const base64Data = fileData.toString('base64');
       const mediaType = getMediaType(file.originalname);
 
-      content.push({
+      apiContent.push({
         type: "image",
         source: {
           type: "base64",
@@ -122,7 +174,7 @@ function processUploadedFiles(files) {
       const fileData = readFileSync(file.path);
       const base64Data = fileData.toString('base64');
 
-      content.push({
+      apiContent.push({
         type: "document",
         source: {
           type: "base64",
@@ -134,14 +186,14 @@ function processUploadedFiles(files) {
     } else {
       // Text files - include as text
       const textContent = readFileSync(file.path, 'utf-8');
-      content.push({
+      apiContent.push({
         type: "text",
         text: `--- File: ${file.originalname} ---\n${textContent}\n--- End of ${file.originalname} ---`
       });
     }
   }
 
-  return content;
+  return { apiContent, fileReferences };
 }
 
 app.use(express.json());
@@ -198,11 +250,16 @@ app.get("/api/sessions", (_req, res) => {
   res.json(list);
 });
 
-// Get a session's messages
+// Get a session's messages (with backward compatibility)
 app.get("/api/sessions/:id/messages", (req, res) => {
   const sessions = loadSessions();
   const session = sessions[req.params.id];
-  res.json(session?.messages || []);
+  const messages = session?.messages || [];
+
+  // Normalize all messages to new format
+  const normalizedMessages = messages.map(normalizeMessageContent);
+
+  res.json(normalizedMessages);
 });
 
 // Delete a session
@@ -261,15 +318,26 @@ app.post("/api/chat", handleUpload, async (req, res) => {
   };
 
   try {
-    // Get conversation history
+    // Get conversation history (normalize for backward compatibility)
     const existingMessages = sessions[currentSessionId]?.messages || [];
-    const conversationHistory = existingMessages.map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
+    const conversationHistory = existingMessages.map(msg => {
+      const normalized = normalizeMessageContent(msg);
+      // For API, we need to extract just text content (assistant messages are strings)
+      // User messages with new format need to be converted back to API format
+      if (normalized.role === "assistant") {
+        return { role: "assistant", content: normalized.content[0].text };
+      }
+      // For user messages, reconstruct the content array (text only for history)
+      const textParts = normalized.content.filter(c => c.type === "text");
+      return {
+        role: "user",
+        content: textParts.map(c => ({ type: "text", text: c.text }))
+      };
+    });
 
     // Build user message content
     const userContent = [];
+    let fileReferencesForStorage = [];
 
     // Add text message
     userContent.push({
@@ -279,8 +347,9 @@ app.post("/api/chat", handleUpload, async (req, res) => {
 
     // Add uploaded files
     if (uploadedFiles.length > 0) {
-      const fileContent = processUploadedFiles(uploadedFiles);
-      userContent.push(...fileContent);
+      const { apiContent, fileReferences } = processUploadedFiles(uploadedFiles, currentSessionId);
+      userContent.push(...apiContent);
+      fileReferencesForStorage = fileReferences;
     }
 
     // Add user message to history
@@ -396,11 +465,28 @@ app.post("/api/chat", handleUpload, async (req, res) => {
       ? message.slice(0, 80) + (message.length > 80 ? "..." : "")
       : reloadedSessions[currentSessionId]?.title || message.slice(0, 80);
 
-    // Store messages locally
+    // Store messages locally with new structured format
     const existingMsgs = reloadedSessions[currentSessionId]?.messages || [];
+
+    // Build user message content for storage
+    const userMessageContent = [
+      { type: "text", text: message }
+    ];
+    if (fileReferencesForStorage.length > 0) {
+      userMessageContent.push(...fileReferencesForStorage);
+    }
+
     existingMsgs.push(
-      { role: "user", content: message + (uploadedFiles.length > 0 ? ` [+${uploadedFiles.length} file(s)]` : '') },
-      { role: "assistant", content: fullText }
+      {
+        role: "user",
+        content: userMessageContent,
+        timestamp: new Date().toISOString()
+      },
+      {
+        role: "assistant",
+        content: fullText,
+        timestamp: new Date().toISOString()
+      }
     );
 
     reloadedSessions[currentSessionId] = {
@@ -416,18 +502,95 @@ app.post("/api/chat", handleUpload, async (req, res) => {
 
     res.write("data: [DONE]\n\n");
     res.end();
+
+    // Cleanup temp files after successful response
+    cleanupFiles();
   } catch (err) {
     console.error("Failed to call Vertex AI:", err);
     res.write(`data: ${JSON.stringify({ type: "error", error: err.message })}\n\n`);
     res.write("data: [DONE]\n\n");
     res.end();
-  } finally {
+
+    // Cleanup temp files on error
     cleanupFiles();
   }
 });
 
+// Workspace API endpoints
+
+// List all files in a session's workspace
+app.get("/api/workspace/:sessionId/files", (req, res) => {
+  const { sessionId } = req.params;
+  const workspacePath = getWorkspacePath(sessionId);
+
+  if (!existsSync(workspacePath)) {
+    return res.json([]);
+  }
+
+  try {
+    const files = readdirSync(workspacePath).map(filename => {
+      const filePath = join(workspacePath, filename);
+      const stats = statSync(filePath);
+      return {
+        name: filename,
+        path: join("workspace", filename),
+        size: stats.size,
+        modified: stats.mtime.toISOString()
+      };
+    });
+    res.json(files);
+  } catch (err) {
+    console.error("Failed to list workspace files:", err);
+    res.status(500).json({ error: "Failed to list workspace files" });
+  }
+});
+
+// Get a specific file from a session's workspace
+app.get("/api/workspace/:sessionId/file", (req, res) => {
+  const { sessionId } = req.params;
+  const { path: relativePath } = req.query;
+
+  if (!relativePath) {
+    return res.status(400).json({ error: "path query parameter is required" });
+  }
+
+  // Security: ensure path is within workspace (prevent directory traversal)
+  if (relativePath.includes("..") || relativePath.startsWith("/")) {
+    return res.status(400).json({ error: "Invalid path" });
+  }
+
+  const workspacePath = getWorkspacePath(sessionId);
+  const filePath = join(workspacePath, relativePath.replace(/^workspace\//, ""));
+
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found" });
+  }
+
+  try {
+    const stats = statSync(filePath);
+
+    if (!stats.isFile()) {
+      return res.status(400).json({ error: "Path is not a file" });
+    }
+
+    // Determine content type from extension
+    const contentType = getMediaType(basename(filePath));
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", stats.size);
+    res.setHeader("Content-Disposition", `inline; filename="${basename(filePath)}"`);
+
+    // Stream file to response
+    const stream = createReadStream(filePath);
+    stream.pipe(res);
+  } catch (err) {
+    console.error("Failed to read workspace file:", err);
+    res.status(500).json({ error: "Failed to read file" });
+  }
+});
+
 // Export app for testing
-export { app, ALL_MODELS, loadSessions, saveSessions, DATA_DIR };
+export { app, ALL_MODELS, loadSessions, saveSessions, DATA_DIR, getWorkspacePath, normalizeMessageContent };
 
 // Start server only when run directly
 import { fileURLToPath } from "url";
