@@ -2,6 +2,7 @@
 let currentSessionId = null;
 let sessions = {};
 let isStreaming = false;
+let currentStreamId = null; // track active stream for stopping
 let currentMessages = []; // local message history for display
 let selectedFiles = []; // files to upload
 let researchMode = false; // research mode toggle
@@ -11,6 +12,7 @@ let sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true'; // s
 // DOM elements
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
+const stopBtn = document.getElementById("stopBtn");
 const messagesEl = document.getElementById("messages");
 const emptyState = document.getElementById("emptyState");
 const sessionList = document.getElementById("sessionList");
@@ -55,6 +57,7 @@ chatInput.addEventListener("keydown", (e) => {
 });
 
 sendBtn.addEventListener("click", sendMessage);
+stopBtn.addEventListener("click", stopStream);
 newChatBtn.addEventListener("click", startNewChat);
 modelSelect.addEventListener("change", () => {
   modelBadge.textContent = modelSelect.value;
@@ -130,6 +133,44 @@ sidebarToggle.addEventListener("click", () => {
 function initializeSidebar() {
   if (sidebarCollapsed) {
     sidebar.classList.add('collapsed');
+  }
+}
+
+async function stopStream() {
+  if (!currentStreamId) return;
+
+  try {
+    await fetch("/api/chat/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId: currentStreamId }),
+    });
+
+    // Show stopped message
+    const msgEl = messagesEl.querySelector(".message.assistant:last-child");
+    const contentEl = msgEl?.querySelector(".message-content");
+    if (contentEl) {
+      contentEl.classList.remove("streaming-cursor");
+
+      // Check if this is research mode (has research-mode div)
+      const researchMode = contentEl.querySelector(".research-mode");
+      if (researchMode) {
+        // Research mode: Add stopped notice to the research UI
+        const stoppedNotice = document.createElement("div");
+        stoppedNotice.className = "research-status";
+        stoppedNotice.style.color = "var(--accent)";
+        stoppedNotice.style.fontStyle = "italic";
+        stoppedNotice.style.marginTop = "12px";
+        stoppedNotice.textContent = "Research stopped by user";
+        researchMode.appendChild(stoppedNotice);
+      } else {
+        // Normal mode: Append stopped message to text
+        const currentContent = contentEl.textContent || "";
+        contentEl.innerHTML = renderMarkdown(currentContent + "\n\n*Response stopped by user*");
+      }
+    }
+  } catch (err) {
+    console.error("Failed to stop stream:", err);
   }
 }
 
@@ -286,12 +327,30 @@ function renderMessages() {
   emptyState.style.display = "none";
   messagesEl.innerHTML = currentMessages
     .map(
-      (m) => `
+      (m) => {
+        // Extract text content from message
+        let textContent = "";
+
+        // Both user and assistant messages can be array or string after normalization
+        if (Array.isArray(m.content)) {
+          // New format: extract text from content blocks
+          const textParts = m.content
+            .filter(block => block.type === "text")
+            .map(block => block.text);
+          const rawText = textParts.join("\n");
+          textContent = m.role === "assistant" ? renderMarkdown(rawText) : escapeHtml(rawText);
+        } else {
+          // Old format: content is a string (backward compatibility)
+          textContent = m.role === "assistant" ? renderMarkdown(m.content) : escapeHtml(m.content);
+        }
+
+        return `
     <div class="message ${m.role}">
       <div class="role-label">${m.role === "user" ? "You" : "Claude"}</div>
-      <div class="message-content">${m.role === "assistant" ? renderMarkdown(m.content) : escapeHtml(m.content)}</div>
+      <div class="message-content">${textContent}</div>
     </div>
-  `
+  `;
+      }
     )
     .join("");
 
@@ -305,6 +364,8 @@ async function sendMessage() {
 
   isStreaming = true;
   sendBtn.disabled = true;
+  sendBtn.style.display = "none";
+  stopBtn.classList.add("visible");
   chatInput.value = "";
   chatInput.style.height = "auto";
 
@@ -400,6 +461,7 @@ async function sendMessage() {
 
           if (event.type === "session") {
             currentSessionId = event.sessionId;
+            currentStreamId = event.streamId;
           } else if (event.type === "research_start") {
             // Research mode activated
             if (!gotFirstText) {
@@ -422,7 +484,7 @@ async function sendMessage() {
               <div class="research-query-item" data-index="${i}">
                 <span class="query-number">${i + 1}</span>
                 <span class="query-text">${escapeHtml(q)}</span>
-                <span class="query-status pending">⏳</span>
+                <span class="query-status pending"></span>
               </div>
             `).join('');
             contentEl.innerHTML = `
@@ -445,10 +507,10 @@ async function sendMessage() {
             msgEl._totalQueries = event.total;
             scrollToBottom();
           } else if (event.type === "research_query") {
-            // Mark current query as in progress
+            // Mark current query as in progress with animated spinner
             const queryItems = contentEl.querySelectorAll(".research-query-item");
             if (queryItems[event.index - 1]) {
-              queryItems[event.index - 1].querySelector(".query-status").innerHTML = "⏳";
+              queryItems[event.index - 1].querySelector(".query-status").innerHTML = '<div class="query-spinner"></div>';
               queryItems[event.index - 1].classList.add("active");
             }
             scrollToBottom();
@@ -460,10 +522,10 @@ async function sendMessage() {
             if (progressFill) progressFill.style.width = percentage + "%";
             if (progressText) progressText.textContent = `${event.completed} / ${event.total} queries completed`;
 
-            // Mark completed queries
+            // Mark completed queries with checkmark (stop spinner)
             const queryItems = contentEl.querySelectorAll(".research-query-item");
             if (queryItems[event.completed - 1]) {
-              queryItems[event.completed - 1].querySelector(".query-status").innerHTML = "✅";
+              queryItems[event.completed - 1].querySelector(".query-status").innerHTML = '<span class="query-checkmark">✓</span>';
               queryItems[event.completed - 1].classList.remove("active");
               queryItems[event.completed - 1].classList.add("completed");
             }
@@ -561,6 +623,9 @@ async function sendMessage() {
   } finally {
     isStreaming = false;
     sendBtn.disabled = false;
+    sendBtn.style.display = "flex";
+    stopBtn.classList.remove("visible");
+    currentStreamId = null;
     chatInput.focus();
   }
 }
