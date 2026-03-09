@@ -60,7 +60,9 @@ sendBtn.addEventListener("click", sendMessage);
 stopBtn.addEventListener("click", stopStream);
 newChatBtn.addEventListener("click", startNewChat);
 modelSelect.addEventListener("change", () => {
-  modelBadge.textContent = modelSelect.value;
+  // Re-query badge since updateHeader() recreates it
+  const badge = document.getElementById("modelBadge");
+  if (badge) badge.textContent = modelSelect.value;
 });
 
 // File upload handlers
