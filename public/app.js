@@ -9,6 +9,44 @@ let researchMode = false; // research mode toggle
 let currentTheme = localStorage.getItem('theme') || 'dark'; // theme preference
 let sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true'; // sidebar state
 let searchQuery = ''; // current search filter
+let activeTagFilters = new Set(); // active tag filters in sidebar
+
+const TAG_COLORS = [
+  "#4ade80", "#f59e0b", "#818cf8", "#f472b6", "#38bdf8",
+  "#fb923c", "#a78bfa", "#34d399", "#fbbf24", "#22d3ee",
+];
+
+function loadTagColors() {
+  try {
+    return JSON.parse(localStorage.getItem("tagColors") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveTagColors(colors) {
+  localStorage.setItem("tagColors", JSON.stringify(colors));
+}
+
+function getTagColor(tagName) {
+  const colors = loadTagColors();
+  if (colors[tagName]) return colors[tagName];
+
+  // Assign next available color
+  const usedColors = new Set(Object.values(colors));
+  const available = TAG_COLORS.find(c => !usedColors.has(c)) || TAG_COLORS[Object.keys(colors).length % TAG_COLORS.length];
+  colors[tagName] = available;
+  saveTagColors(colors);
+  return available;
+}
+
+function getAllTags() {
+  const tags = new Set();
+  Object.values(sessions).forEach(s => {
+    (s.tags || []).forEach(t => tags.add(t));
+  });
+  return Array.from(tags).sort();
+}
 
 // DOM elements
 const chatInput = document.getElementById("chatInput");
