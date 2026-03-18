@@ -48,6 +48,29 @@ function getAllTags() {
   return Array.from(tags).sort();
 }
 
+function renderTagFilterRow() {
+  const allTags = getAllTags();
+  if (allTags.length === 0) {
+    tagFilterRow.innerHTML = "";
+    return;
+  }
+
+  tagFilterRow.innerHTML = allTags.map(t => {
+    const active = activeTagFilters.has(t) ? "active" : "";
+    return `<span class="tag-filter-pill ${active}" style="background:${getTagColor(t)}" onclick="toggleTagFilter('${escapeHtml(t)}')">${escapeHtml(t)}</span>`;
+  }).join("");
+}
+
+function toggleTagFilter(tag) {
+  if (activeTagFilters.has(tag)) {
+    activeTagFilters.delete(tag);
+  } else {
+    activeTagFilters.add(tag);
+  }
+  renderTagFilterRow();
+  renderSessionList();
+}
+
 // DOM elements
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
@@ -70,6 +93,7 @@ const sidebar = document.getElementById("sidebar");
 const sidebarToggle = document.getElementById("sidebarToggle");
 const searchInput = document.getElementById("searchInput");
 const searchClear = document.getElementById("searchClear");
+const tagFilterRow = document.getElementById("tagFilterRow");
 
 // Configure marked
 marked.setOptions({
@@ -370,6 +394,7 @@ async function loadSessions() {
     sessions = {};
     list.forEach((s) => (sessions[s.id] = s));
     renderSessionList();
+    renderTagFilterRow();
   } catch (err) {
     console.error("Failed to load sessions:", err);
   }
