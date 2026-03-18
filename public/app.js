@@ -614,16 +614,18 @@ function renderSessionItem(s) {
   return `
     <div class="session-item ${s.id === currentSessionId ? "active" : ""}"
          data-id="${s.id}" onclick="selectSession('${s.id}')">
+      <div class="session-actions">
+        <button class="pin-btn ${pinnedClass}" onclick="event.stopPropagation(); togglePin('${s.id}')" title="${s.pinned ? "Unpin" : "Pin"}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="${s.pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M12 17v5M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+        </button>
+        <button class="tag-btn" onclick="event.stopPropagation(); openTagModal('${s.id}')" title="Tags">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
+        </button>
+        <button class="delete-btn" onclick="event.stopPropagation(); deleteSession('${s.id}')" title="Delete">x</button>
+      </div>
       <div class="title">${escapeHtml(s.title || "Untitled")}</div>
       <div class="meta">${s.model || "sonnet"} -- ${timeAgo(s.updatedAt)}</div>
       ${tagPills ? `<div class="session-tags">${tagPills}</div>` : ""}
-      <button class="pin-btn ${pinnedClass}" onclick="event.stopPropagation(); togglePin('${s.id}')" title="${s.pinned ? "Unpin" : "Pin"}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="${s.pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M12 17v5M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
-      </button>
-      <button class="tag-btn" onclick="event.stopPropagation(); openTagModal('${s.id}')" title="Tags">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
-      </button>
-      <button class="delete-btn" onclick="event.stopPropagation(); deleteSession('${s.id}')" title="Delete">x</button>
     </div>
   `;
 }

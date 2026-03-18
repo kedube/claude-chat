@@ -180,7 +180,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      padding-right: 20px;
+      padding-right: 4px;
     }
 
     .session-item .meta {
@@ -189,24 +189,48 @@
       margin-top: 2px;
     }
 
-    .session-item .delete-btn {
+    .session-actions {
       position: absolute;
-      right: 8px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 16px;
-      padding: 4px;
-      border-radius: 4px;
+      right: 6px;
+      top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 2px;
       opacity: 0;
       transition: opacity 0.15s;
     }
 
-    .session-item:hover .delete-btn { opacity: 1; }
-    .session-item .delete-btn:hover { color: var(--accent); }
+    .session-item:hover .session-actions { opacity: 1; }
+
+    .session-actions button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 3px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .session-actions button:hover { color: var(--accent); }
+
+    .session-actions .pin-btn.pinned {
+      color: var(--accent);
+    }
+
+    .session-item:not(:hover) .session-actions:has(.pin-btn.pinned) {
+      opacity: 1;
+    }
+
+    .session-item:not(:hover) .session-actions .pin-btn:not(.pinned),
+    .session-item:not(:hover) .session-actions .tag-btn,
+    .session-item:not(:hover) .session-actions .delete-btn {
+      display: none;
+    }
+
+    .session-actions .delete-btn { font-size: 14px; }
 
     /* Chat area */
     .chat-area {
@@ -853,25 +877,6 @@
       color: var(--text-primary);
     }
 
-    .session-item .pin-btn {
-      position: absolute;
-      right: 28px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 14px;
-      padding: 4px;
-      border-radius: 4px;
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-
-    .session-item:hover .pin-btn { opacity: 1; }
-    .session-item .pin-btn.pinned { opacity: 1; color: var(--accent); }
-    .session-item .pin-btn:hover { color: var(--accent); }
 
     .session-divider {
       font-size: 11px;
@@ -900,24 +905,6 @@
       white-space: nowrap;
     }
 
-    .session-item .tag-btn {
-      position: absolute;
-      right: 48px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 14px;
-      padding: 4px;
-      border-radius: 4px;
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-
-    .session-item:hover .tag-btn { opacity: 1; }
-    .session-item .tag-btn:hover { color: var(--accent); }
 
     .tag-filter-row {
       display: none;
