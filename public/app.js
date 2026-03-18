@@ -663,6 +663,7 @@ async function deleteSession(id) {
       startNewChat();
     }
     renderSessionList();
+    renderTagFilterRow();
   } catch (err) {
     console.error("Failed to delete session:", err);
   }
