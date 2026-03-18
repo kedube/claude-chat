@@ -10,6 +10,7 @@ let currentTheme = localStorage.getItem('theme') || 'dark'; // theme preference
 let sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true'; // sidebar state
 let searchQuery = ''; // current search filter
 let activeTagFilters = new Set(); // active tag filters in sidebar
+let tagModalSessionId = null; // which session the tag modal is editing
 
 const TAG_COLORS = [
   "#4ade80", "#f59e0b", "#818cf8", "#f472b6", "#38bdf8",
@@ -71,6 +72,113 @@ function toggleTagFilter(tag) {
   renderSessionList();
 }
 
+function openTagModal(sessionId) {
+  tagModalSessionId = sessionId;
+  tagModalInput.value = "";
+  tagSuggestions.style.display = "none";
+  renderTagModalCurrent();
+  tagModalOverlay.classList.add("visible");
+  tagModalInput.focus();
+}
+
+function closeTagModal() {
+  tagModalOverlay.classList.remove("visible");
+  tagModalSessionId = null;
+}
+
+function renderTagModalCurrent() {
+  const session = sessions[tagModalSessionId];
+  if (!session) return;
+
+  const tags = session.tags || [];
+  tagModalCurrent.innerHTML = tags.map(t =>
+    `<span class="tag-modal-pill" style="background:${getTagColor(t)}">
+      ${escapeHtml(t)}
+      <span class="tag-remove" data-tag="${escapeHtml(t)}">&times;</span>
+    </span>`
+  ).join("");
+}
+
+async function addTagToSession(tagName) {
+  const normalized = tagName.trim().toLowerCase().slice(0, 30);
+  if (!normalized) return;
+
+  const session = sessions[tagModalSessionId];
+  if (!session) return;
+
+  if (!session.tags) session.tags = [];
+  if (session.tags.includes(normalized)) return;
+
+  session.tags.push(normalized);
+  getTagColor(normalized); // ensure color is assigned
+
+  try {
+    await fetch(`/api/sessions/${tagModalSessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: session.tags }),
+    });
+  } catch (err) {
+    console.error("Failed to save tags:", err);
+  }
+
+  tagModalInput.value = "";
+  tagSuggestions.style.display = "none";
+  renderTagModalCurrent();
+  renderSessionList();
+  renderTagFilterRow();
+}
+
+async function removeTagFromSession(tagName) {
+  const session = sessions[tagModalSessionId];
+  if (!session || !session.tags) return;
+
+  session.tags = session.tags.filter(t => t !== tagName);
+
+  try {
+    await fetch(`/api/sessions/${tagModalSessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: session.tags }),
+    });
+  } catch (err) {
+    console.error("Failed to save tags:", err);
+  }
+
+  renderTagModalCurrent();
+  renderSessionList();
+  renderTagFilterRow();
+}
+
+function updateTagSuggestions() {
+  const query = tagModalInput.value.trim().toLowerCase();
+  if (!query) {
+    tagSuggestions.style.display = "none";
+    return;
+  }
+
+  const sessionTags = sessions[tagModalSessionId]?.tags || [];
+  const allTags = getAllTags().filter(t =>
+    t.includes(query) && !sessionTags.includes(t)
+  );
+
+  let html = allTags.map(t =>
+    `<div class="tag-suggestion-item" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</div>`
+  ).join("");
+
+  const exactMatch = getAllTags().includes(query) || sessionTags.includes(query);
+  if (!exactMatch && query.length > 0) {
+    html += `<div class="tag-suggestion-item create" data-tag="${escapeHtml(query)}">Create "${escapeHtml(query)}"</div>`;
+  }
+
+  if (html) {
+    tagSuggestions.innerHTML = html;
+    tagSuggestions.style.display = "block";
+  } else {
+    tagSuggestions.style.display = "none";
+  }
+}
+
 // DOM elements
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
@@ -94,6 +202,11 @@ const sidebarToggle = document.getElementById("sidebarToggle");
 const searchInput = document.getElementById("searchInput");
 const searchClear = document.getElementById("searchClear");
 const tagFilterRow = document.getElementById("tagFilterRow");
+const tagModalOverlay = document.getElementById("tagModalOverlay");
+const tagModal = document.getElementById("tagModal");
+const tagModalInput = document.getElementById("tagModalInput");
+const tagSuggestions = document.getElementById("tagSuggestions");
+const tagModalCurrent = document.getElementById("tagModalCurrent");
 
 // Configure marked
 marked.setOptions({
@@ -251,6 +364,41 @@ searchClear.addEventListener("click", () => {
   searchQuery = "";
   searchClear.style.display = "none";
   renderSessionList();
+});
+
+// Tag modal event listeners
+tagModalInput.addEventListener("input", updateTagSuggestions);
+
+tagModalInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const query = tagModalInput.value.trim().toLowerCase();
+    if (query) addTagToSession(query);
+  } else if (e.key === "Escape") {
+    closeTagModal();
+  }
+});
+
+// Event delegation for tag suggestions
+tagSuggestions.addEventListener("click", (e) => {
+  const item = e.target.closest(".tag-suggestion-item");
+  if (item) addTagToSession(item.dataset.tag);
+});
+
+// Event delegation for tag removal
+tagModalCurrent.addEventListener("click", (e) => {
+  const removeBtn = e.target.closest(".tag-remove");
+  if (removeBtn) removeTagFromSession(removeBtn.dataset.tag);
+});
+
+tagModalOverlay.addEventListener("click", (e) => {
+  if (e.target === tagModalOverlay) closeTagModal();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && tagModalOverlay.classList.contains("visible")) {
+    closeTagModal();
+  }
 });
 
 async function stopStream() {
