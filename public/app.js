@@ -207,6 +207,8 @@ const tagModal = document.getElementById("tagModal");
 const tagModalInput = document.getElementById("tagModalInput");
 const tagSuggestions = document.getElementById("tagSuggestions");
 const tagModalCurrent = document.getElementById("tagModalCurrent");
+const inputArea = document.querySelector(".input-area");
+const inputWrapper = document.querySelector(".input-wrapper");
 
 // Configure marked
 marked.setOptions({
@@ -290,6 +292,106 @@ chatInput.addEventListener("paste", async (e) => {
     renderFilesList();
   }
 });
+
+// Drag and drop file upload
+let dragCounter = 0; // Track nested drag enter/leave events
+
+function resetDragState() {
+  dragCounter = 0;
+  inputArea.classList.remove("drag-over");
+  inputWrapper?.classList.remove("drag-over");
+}
+
+function isPointInsideElement(el, x, y) {
+  const rect = el.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function isFileDragEvent(e) {
+  const dt = e.dataTransfer;
+  if (!dt) return false;
+  if (dt.files && dt.files.length > 0) {
+    return true;
+  }
+  const types = dt.types;
+  if (!types) return false;
+  return Array.from(types).includes("Files");
+}
+
+inputArea.addEventListener("dragenter", (e) => {
+  if (!isFileDragEvent(e)) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter++;
+  if (dragCounter === 1) {
+    inputArea.classList.add("drag-over");
+    inputWrapper?.classList.add("drag-over");
+  }
+});
+
+inputArea.addEventListener("dragover", (e) => {
+  if (!isFileDragEvent(e)) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+inputArea.addEventListener("dragleave", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter = Math.max(0, dragCounter - 1);
+  if (dragCounter <= 0) {
+    inputArea.classList.remove("drag-over");
+    inputWrapper?.classList.remove("drag-over");
+  }
+});
+
+inputArea.addEventListener("drop", (e) => {
+  if (!isFileDragEvent(e)) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter = 0;
+  inputArea.classList.remove("drag-over");
+  inputWrapper?.classList.remove("drag-over");
+
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length > 0) {
+    selectedFiles.push(...files);
+    renderFilesList();
+    chatInput.focus();
+  }
+});
+
+document.addEventListener("dragover", (e) => {
+  if (!isFileDragEvent(e)) {
+    return;
+  }
+
+  const activeDropZone = inputWrapper || inputArea;
+  if (!isPointInsideElement(activeDropZone, e.clientX, e.clientY)) {
+    resetDragState();
+  }
+});
+
+document.addEventListener("dragleave", (e) => {
+  const leftWindow =
+    e.clientX <= 0 ||
+    e.clientY <= 0 ||
+    e.clientX >= window.innerWidth ||
+    e.clientY >= window.innerHeight;
+
+  if (leftWindow) {
+    resetDragState();
+  }
+});
+
+document.addEventListener("drop", resetDragState);
+window.addEventListener("dragend", resetDragState);
 
 // Theme toggle
 themeToggle.addEventListener("click", () => {
@@ -699,9 +801,19 @@ function renderMessages() {
           textContent = m.role === "assistant" ? renderMarkdown(m.content) : escapeHtml(m.content);
         }
 
+        const messageHeader = m.role === "assistant"
+          ? `
+      <div class="message-header">
+        <div class="role-label">Claude</div>
+        <div class="message-actions">
+          <button class="message-copy-btn" type="button">Copy</button>
+        </div>
+      </div>`
+          : `<div class="role-label">You</div>`;
+
         return `
     <div class="message ${m.role}">
-      <div class="role-label">${m.role === "user" ? "You" : "Claude"}</div>
+      ${messageHeader}
       <div class="message-content">${textContent}</div>
     </div>
   `;
@@ -736,7 +848,12 @@ async function sendMessage() {
   const msgEl = document.createElement("div");
   msgEl.className = "message assistant";
   msgEl.innerHTML = `
-    <div class="role-label">Claude</div>
+    <div class="message-header">
+      <div class="role-label">Claude</div>
+      <div class="message-actions">
+        <button class="message-copy-btn" type="button" style="display: none;">Copy</button>
+      </div>
+    </div>
     <div class="message-content streaming-cursor">
       <div class="loading-dots"><span></span><span></span><span></span></div>
     </div>
@@ -745,6 +862,9 @@ async function sendMessage() {
   scrollToBottom();
 
   const contentEl = msgEl.querySelector(".message-content");
+  const messageCopyBtn = msgEl.querySelector(".message-copy-btn");
+  messageCopyBtn._copyText = "";
+  bindCopyButton(messageCopyBtn, () => messageCopyBtn._copyText || "");
 
   try {
     // Build form data with files
@@ -896,6 +1016,10 @@ async function sendMessage() {
             fullText += event.text;
             contentEl.innerHTML = renderMarkdown(fullText);
             contentEl.classList.add("streaming-cursor");
+            if (messageCopyBtn) {
+              messageCopyBtn.style.display = "inline-flex";
+              messageCopyBtn._copyText = fullText;
+            }
             scrollToBottom();
           } else if (event.type === "tool_use" && event.name === "web_search") {
             // Show search indicator immediately
@@ -936,6 +1060,10 @@ async function sendMessage() {
           } else if (event.type === "error") {
             contentEl.classList.remove("streaming-cursor");
             contentEl.innerHTML = `<p style="color: var(--accent)">Error: ${escapeHtml(event.error)}</p>`;
+            if (messageCopyBtn) {
+              messageCopyBtn.style.display = "none";
+              messageCopyBtn._copyText = "";
+            }
           }
         } catch {
           // Skip malformed JSON
@@ -986,10 +1114,113 @@ function renderMarkdown(text) {
   }
 }
 
+function getMessageText(message) {
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter(block => block.type === "text")
+      .map(block => block.text)
+      .join("\n");
+  }
+
+  return message.content || "";
+}
+
 function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+async function copyContentToClipboard(content) {
+  const text = typeof content === "string" ? content : (content?.text || "");
+  const html = typeof content === "string" ? "" : (content?.html || "");
+
+  if (!text && !html) {
+    throw new Error("Nothing to copy");
+  }
+
+  try {
+    if (html && navigator.clipboard?.write && window.ClipboardItem) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob([text], { type: "text/plain" }),
+          "text/html": new Blob([html], { type: "text/html" }),
+        }),
+      ]);
+      return;
+    }
+  } catch (err) {
+    console.warn("Rich clipboard write failed, falling back to plain text copy.", err);
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch (err) {
+    console.warn("Clipboard API writeText failed, falling back to execCommand copy.", err);
+  }
+
+  const activeElement = document.activeElement;
+  const selection = document.getSelection();
+  const previousRanges = [];
+  if (selection) {
+    for (let i = 0; i < selection.rangeCount; i++) {
+      previousRanges.push(selection.getRangeAt(i).cloneRange());
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const successful = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (selection) {
+    selection.removeAllRanges();
+    previousRanges.forEach((range) => selection.addRange(range));
+  }
+
+  if (activeElement?.focus) {
+    activeElement.focus();
+  }
+
+  if (!successful) {
+    throw new Error("Clipboard copy failed");
+  }
+}
+
+function bindCopyButton(button, getContent) {
+  if (!button || button.dataset.copyBound === "true") return;
+
+  button.dataset.copyBound = "true";
+  button.addEventListener("click", async () => {
+    try {
+      await copyContentToClipboard(getContent());
+      const originalText = button.textContent;
+      button.textContent = "Copied!";
+      setTimeout(() => {
+        button.textContent = originalText;
+      }, 1500);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+      button.textContent = "Failed";
+      setTimeout(() => {
+        button.textContent = "Copy";
+      }, 1500);
+    }
+  });
 }
 
 function addCopyButtons() {
@@ -998,13 +1229,22 @@ function addCopyButtons() {
     const btn = document.createElement("button");
     btn.className = "copy-btn";
     btn.textContent = "Copy";
-    btn.addEventListener("click", () => {
-      navigator.clipboard.writeText(block.textContent);
-      btn.textContent = "Copied!";
-      setTimeout(() => (btn.textContent = "Copy"), 1500);
-    });
+    bindCopyButton(btn, () => block.textContent);
     block.parentElement.style.position = "relative";
     block.parentElement.appendChild(btn);
+  });
+
+  document.querySelectorAll(".message.assistant").forEach((messageEl, index) => {
+    const button = messageEl.querySelector(".message-copy-btn");
+    const contentEl = messageEl.querySelector(".message-content");
+    const message = currentMessages.filter((entry) => entry.role === "assistant")[index];
+    if (!button || !message || !contentEl) return;
+
+    button._copyText = getMessageText(message);
+    bindCopyButton(button, () => ({
+      text: button._copyText || "",
+      html: contentEl.innerHTML,
+    }));
   });
 }
 

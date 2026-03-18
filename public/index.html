@@ -315,6 +315,42 @@
     .message.user .role-label { color: #5b9bd5; }
     .message.assistant .role-label { color: var(--accent); }
 
+    .message-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+
+    .message-header .role-label {
+      margin-bottom: 0;
+    }
+
+    .message-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .message-copy-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 4px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1.2;
+      transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .message-copy-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
     .message-content { word-wrap: break-word; }
 
     .message-content p { margin-bottom: 12px; }
@@ -413,6 +449,32 @@
       padding: 16px 20px;
       border-top: 1px solid var(--border);
       background: var(--bg-secondary);
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .input-area.drag-over {
+      background: var(--bg-tertiary);
+      border-top: 2px solid var(--accent);
+    }
+
+    .input-area.drag-over::before {
+      content: "Drop files to upload";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(233, 69, 96, 0.1);
+      color: var(--accent);
+      font-size: 16px;
+      font-weight: 500;
+      pointer-events: none;
+      z-index: 10;
+      backdrop-filter: blur(2px);
     }
 
     .input-wrapper {
@@ -421,6 +483,32 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      position: relative;
+      border-radius: 16px;
+      transition: box-shadow 0.2s ease, transform 0.2s ease;
+    }
+
+    .input-wrapper.drag-over {
+      box-shadow: 0 0 0 2px var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .input-wrapper.drag-over::after {
+      content: "Drop files into your message";
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      background: rgba(233, 69, 96, 0.12);
+      color: var(--accent);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      pointer-events: none;
+      z-index: 11;
+      backdrop-filter: blur(2px);
     }
 
     .input-row {
